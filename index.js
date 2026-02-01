@@ -14,15 +14,15 @@ const CHANNELS = [
   "@Manish_Looterss"
 ];
 
-// ✅ Redeem points updated
+// Redeem points (BALANCE ONLY)
 const REDEEM = {
-  500: { points: 3 },
+  500: { points: 2 },
   1000: { points: 6 },
   2000: { points: 10 },
   4000: { points: 15 }
 };
 
-// ================= DATABASE =================
+// ================= DATABASE (MEMORY) =================
 const users = {}; // uid => { points, refer }
 const coupons = { 500: [], 1000: [], 2000: [], 4000: [] };
 const adminStep = {};
@@ -68,12 +68,22 @@ bot.start(async (ctx) => {
   const uid = ctx.from.id;
   getUser(uid);
 
+  // Referral handling
+  if (ctx.startPayload && ctx.startPayload !== uid.toString()) {
+    const ref = getUser(ctx.startPayload);
+    ref.points += 1; // 1 point per refer
+    ref.refer += 1;
+  }
+
   if (!(await checkJoin(ctx))) {
     return ctx.reply(
       "🔒 Pehle sab channels join karo",
       Markup.inlineKeyboard([
         ...CHANNELS.map(c => [
-          Markup.button.url(`Join ${c}`, `https://t.me/${c.replace("@", "")}`)
+          Markup.button.url(
+            `Join ${c}`,
+            `https://t.me/${c.replace("@", "")}`
+          )
         ]),
         [Markup.button.callback("✅ I Joined", "check_join")]
       ])
@@ -84,6 +94,7 @@ bot.start(async (ctx) => {
     "✅ Bot Ready",
     Markup.keyboard([
       ["👤 Profile", "🎁 Redeem"],
+      ["🤝 Refer", "🏆 Leaderboard"],
       ["📊 Stats", "❓ Help"]
     ]).resize()
   );
@@ -91,13 +102,13 @@ bot.start(async (ctx) => {
 
 bot.action("check_join", async (ctx) => {
   if (await checkJoin(ctx)) {
-    await ctx.editMessageText("✅ Verified! Ab menu use karne Ke Liye /start Pe Click Karo ");
+    await ctx.editMessageText("✅ Verified! Ab menu use karo");
   } else {
     await ctx.answerCbQuery("❌ Abhi join pending", { show_alert: true });
   }
 });
 
-// ================= ADMIN HANDLERS =================
+// ================= ADMIN BUTTON HANDLERS =================
 bot.hears("➕ Add Balance", (ctx) => {
   if (!isAdmin(ctx.from.id)) return;
   adminStep[ctx.from.id] = "ADD_BAL";
@@ -134,29 +145,25 @@ bot.hears("📢 Broadcast", (ctx) => {
   ctx.reply("Send message");
 });
 
-// ================= USER MESSAGE HANDLER =================
+// ================= MAIN TEXT HANDLER =================
 bot.on("text", async (ctx) => {
   const text = ctx.message.text.trim();
   const uid = ctx.from.id;
   const user = getUser(uid);
 
-  // ===== Admin steps
+  // ===== ADMIN STEPS =====
   if (adminStep[uid] && isAdmin(uid)) {
     const step = adminStep[uid];
 
     if (step === "ADD_BAL") {
       const [id, pts] = text.split(" ");
-      const uid2 = Number(id);
-      if (!uid2 || isNaN(pts)) return ctx.reply("❌ Invalid format");
-      getUser(uid2).points += Number(pts);
+      getUser(Number(id)).points += Number(pts);
       ctx.reply("✅ Balance added");
     }
 
     if (step === "REM_BAL") {
       const [id, pts] = text.split(" ");
-      const uid2 = Number(id);
-      if (!uid2 || isNaN(pts)) return ctx.reply("❌ Invalid format");
-      const u = getUser(uid2);
+      const u = getUser(Number(id));
       u.points = Math.max(0, u.points - Number(pts));
       ctx.reply("✅ Balance removed");
     }
@@ -175,16 +182,13 @@ bot.on("text", async (ctx) => {
     }
 
     if (step === "CLR_CP") {
-      const amt = Number(text);
-      if ([500,1000,2000,4000].includes(amt)) {
-        coupons[amt] = [];
-        ctx.reply(`✅ Coupons cleared for ₹${amt}`);
-      } else ctx.reply("❌ Invalid amount");
+      coupons[Number(text)] = [];
+      ctx.reply("✅ Coupons cleared");
     }
 
     if (step === "ADD_ADMIN") {
       ADMINS.add(Number(text));
-      ctx.reply("✅ New admin added");
+      ctx.reply("✅ Admin added");
     }
 
     if (step === "BC") {
@@ -198,11 +202,30 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // ===== User commands
+  // ===== USER FEATURES =====
   if (text === "👤 Profile") {
     return ctx.reply(
-      `👤 Profile\n\n💎 Balance: ${user.points}\n👥 Refers: ${user.refer}\n\n🔗 Referral Link:\nhttps://t.me/${ctx.botInfo.username}?start=${uid}`
+      `👤 Profile\n\n💎 Balance: ${user.points}\n👥 Refers: ${user.refer}`
     );
+  }
+
+  if (text === "🤝 Refer") {
+    return ctx.reply(
+      `🤝 Refer & Earn\n\nInvite friends and earn 💎\n\n🔗 Your Link:\nhttps://t.me/${ctx.botInfo.username}?start=${uid}`
+    );
+  }
+
+  if (text === "🏆 Leaderboard") {
+    const top = Object.entries(users)
+      .sort((a, b) => b[1].points - a[1].points)
+      .slice(0, 10);
+
+    let msg = "🏆 Top Users Leaderboard\n\n";
+    top.forEach((u, i) => {
+      msg += `${i + 1}. ID: ${u[0]} — 💎 ${u[1].points}\n`;
+    });
+
+    return ctx.reply(msg || "No data yet");
   }
 
   if (text === "📊 Stats") {
@@ -213,7 +236,7 @@ bot.on("text", async (ctx) => {
 
   if (text === "❓ Help") {
     return ctx.reply(
-      "ℹ️ Use bot:\n1️⃣ Join channels\n2️⃣ Refer friends\n3️⃣ Earn 💎\n4️⃣ Redeem vouchers"
+      "ℹ️ How to use:\n1️⃣ Join channels\n2️⃣ Refer friends\n3️⃣ Earn 💎\n4️⃣ Redeem vouchers"
     );
   }
 
@@ -230,27 +253,24 @@ bot.on("text", async (ctx) => {
   }
 });
 
-// ================= REDEEM CALLBACKS =================
-[500,1000,2000,4000].forEach(amt => {
+// ================= REDEEM =================
+[500, 1000, 2000, 4000].forEach(amt => {
   bot.action(`redeem_${amt}`, (ctx) => {
     const u = getUser(ctx.from.id);
-    const rule = REDEEM[amt];
-
-    // ✅ Only balance check
-    if (u.points < rule.points)
+    if (u.points < REDEEM[amt].points)
       return ctx.answerCbQuery("❌ Not enough balance", { show_alert: true });
 
-    if (coupons[amt].length === 0)
+    if (!coupons[amt].length)
       return ctx.answerCbQuery("❌ Out of stock", { show_alert: true });
 
     const code = coupons[amt].shift();
-    u.points -= rule.points;
+    u.points -= REDEEM[amt].points;
     stats.redeemed++;
 
     ctx.reply(`🎉 Redeem Successful\n₹${amt} Voucher\n🎟 Code:\n${code}`);
   });
 });
 
-// ================= BOT LAUNCH =================
+// ================= LAUNCH =================
 bot.launch();
-console.log("🤖 BOT RUNNING – FINAL VERSION");
+console.log("🤖 BOT RUNNING WITH LEADERBOARD + REFER");
