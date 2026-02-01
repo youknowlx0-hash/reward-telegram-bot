@@ -1,195 +1,253 @@
-const TelegramBot = require("node-telegram-bot-api");
+const { Telegraf, Markup } = require("telegraf");
 
-// ===== ENV =====
-const TOKEN = process.env.BOT_TOKEN; // REQUIRED
-const ADMINS = [7702942505]; // add more admin IDs if needed
-
-if (!TOKEN) {
-  console.error("BOT_TOKEN is required");
-  process.exit(1);
+if (!process.env.BOT_TOKEN) {
+  throw new Error("BOT_TOKEN missing");
 }
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// ===== DATABASE (in-memory) =====
-const users = {}; 
-const coupons = {
-  500: [],
-  1000: [],
-  2000: [],
-  4000: []
+// ================= CONFIG =================
+const ADMINS = new Set([7702942505]);
+
+const CHANNELS = [
+  "@Shein_Reward",
+  "@earnmoneysupport1",
+  "@GlobalTaskWorks",
+  "@Manish_Looterss"
+];
+
+const REDEEM = {
+  500: { points: 5, refer: 3 },
+  1000: { points: 10, refer: 6 },
+  2000: { points: 20, refer: 8 },
+  4000: { points: 40, refer: 15 }
 };
 
-let totalRedeems = 0;
+// ================= DATABASE (MEMORY) =================
+const users = {};
+const coupons = { 500: [], 1000: [], 2000: [], 4000: [] };
+const adminStep = {};
+const stats = { redeemed: 0 };
 
-// ===== HELPERS =====
-function isAdmin(id) {
-  return ADMINS.includes(id);
-}
+// ================= HELPERS =================
+const isAdmin = (id) => ADMINS.has(id);
 
-function initUser(id) {
+function getUser(id) {
   if (!users[id]) {
-    users[id] = {
-      balance: 0,
-      refers: 0,
-      redeemed: 0
-    };
+    users[id] = { points: 0, refer: 0 };
   }
+  return users[id];
 }
 
-// ===== START =====
-bot.onText(/\/start(?: (\d+))?/, (msg, match) => {
-  const id = msg.from.id;
-  initUser(id);
+async function checkJoin(ctx) {
+  for (let ch of CHANNELS) {
+    try {
+      const m = await ctx.telegram.getChatMember(ch, ctx.from.id);
+      if (["left", "kicked"].includes(m.status)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
 
-  const ref = match[1];
-  if (ref && ref !== String(id) && users[ref]) {
-    users[ref].refers += 1;
+// ================= START =================
+bot.start(async (ctx) => {
+  const uid = ctx.from.id;
+  getUser(uid);
+
+  // referral
+  if (ctx.startPayload && ctx.startPayload !== uid.toString()) {
+    const refUser = getUser(ctx.startPayload);
+    refUser.refer += 1;
+    refUser.points += 1; // 1 refer = 1 💎
   }
 
-  bot.sendMessage(id,
-`👋 Welcome!
+  if (!(await checkJoin(ctx))) {
+    return ctx.reply(
+      "🔒 Pehle sab channels join karo",
+      Markup.inlineKeyboard([
+        ...CHANNELS.map(c => [
+          Markup.button.url(
+            `Join ${c}`,
+            `https://t.me/${c.replace("@", "")}`
+          )
+        ]),
+        [Markup.button.callback("✅ I Joined", "check_join")]
+      ])
+    );
+  }
 
-💰 Balance: ${users[id].balance}
-👥 Refers: ${users[id].refers}
-
-Use /help to know how to use bot`
-);
+  ctx.reply(
+    "✅ Bot Ready",
+    Markup.keyboard([
+      ["👤 Profile", "🎁 Redeem"],
+      ["📊 Stats", "❓ Help"]
+    ]).resize()
+  );
 });
 
-// ===== HELP =====
-bot.onText(/\/help/, msg => {
-  bot.sendMessage(msg.chat.id,
-`📖 BOT HELP
-
-👤 User Commands:
-/balance – Check balance
-/redeem – Redeem voucher
-/stats – Bot stats
-
-👑 Admin:
-/adminpanel`
-);
+bot.action("check_join", async (ctx) => {
+  if (await checkJoin(ctx)) {
+    await ctx.editMessageText("✅ Verified! Ab menu use karo");
+  } else {
+    await ctx.answerCbQuery("❌ Abhi join pending", { show_alert: true });
+  }
 });
 
-// ===== BALANCE =====
-bot.onText(/\/balance/, msg => {
-  initUser(msg.from.id);
-  bot.sendMessage(msg.chat.id,
-`💰 Your Balance: ${users[msg.from.id].balance}`);
+// ================= USER MENU =================
+bot.on("text", async (ctx) => {
+  const text = ctx.message.text;
+  const uid = ctx.from.id;
+  const user = getUser(uid);
+
+  // ===== ADMIN FLOW =====
+  if (adminStep[uid] && isAdmin(uid)) {
+    const step = adminStep[uid];
+
+    if (step === "ADD_BAL") {
+      const [id, pts] = text.split(" ");
+      getUser(id).points += Number(pts);
+      ctx.reply("✅ Balance added");
+    }
+
+    if (step === "REM_BAL") {
+      const [id, pts] = text.split(" ");
+      const u = getUser(id);
+      u.points = Math.max(0, u.points - Number(pts));
+      ctx.reply("✅ Balance removed");
+    }
+
+    if (step === "ADD_CP") {
+      const lines = text.split("\n");
+      const amt = Number(lines[0]);
+      let added = 0;
+
+      for (let i = 1; i < lines.length; i++) {
+        if (lines[i].trim().length === 15) {
+          coupons[amt].push(lines[i].trim());
+          added++;
+        }
+      }
+      ctx.reply(`✅ ${added} coupons added for ₹${amt}`);
+    }
+
+    if (step === "ADD_ADMIN") {
+      ADMINS.add(Number(text));
+      ctx.reply("✅ New admin added");
+    }
+
+    if (step === "BC") {
+      for (let u in users) {
+        bot.telegram.sendMessage(u, text).catch(() => {});
+      }
+      ctx.reply("✅ Broadcast sent");
+    }
+
+    delete adminStep[uid];
+    return;
+  }
+
+  // ===== USER OPTIONS =====
+  if (text === "👤 Profile") {
+    return ctx.reply(
+      `👤 Profile\n\n💎 Balance: ${user.points}\n👥 Refers: ${user.refer}\n\n🔗 Referral Link:\nhttps://t.me/${ctx.botInfo.username}?start=${uid}`
+    );
+  }
+
+  if (text === "📊 Stats") {
+    return ctx.reply(
+      `📊 Bot Stats\n\n👥 Users: ${Object.keys(users).length}\n🎟 Redeemed: ${stats.redeemed}`
+    );
+  }
+
+  if (text === "❓ Help") {
+    return ctx.reply(
+      "ℹ️ Use bot:\n1️⃣ Join channels\n2️⃣ Refer friends\n3️⃣ Earn 💎\n4️⃣ Redeem vouchers"
+    );
+  }
+
+  if (text === "🎁 Redeem") {
+    return ctx.reply(
+      "🎁 Choose Voucher",
+      Markup.inlineKeyboard([
+        [Markup.button.callback("₹500 (💎5 | 👥3)", "redeem_500")],
+        [Markup.button.callback("₹1000 (💎10 | 👥6)", "redeem_1000")],
+        [Markup.button.callback("₹2000 (💎20 | 👥8)", "redeem_2000")],
+        [Markup.button.callback("₹4000 (💎40 | 👥15)", "redeem_4000")]
+      ])
+    );
+  }
 });
 
-// ===== STATS =====
-bot.onText(/\/stats/, msg => {
-  bot.sendMessage(msg.chat.id,
-`📊 BOT STATS
+// ================= REDEEM =================
+[500, 1000, 2000, 4000].forEach(amt => {
+  bot.action(`redeem_${amt}`, async (ctx) => {
+    const u = getUser(ctx.from.id);
+    const rule = REDEEM[amt];
 
-👥 Users: ${Object.keys(users).length}
-🎁 Redeems: ${totalRedeems}
+    if (u.points < rule.points || u.refer < rule.refer) {
+      return ctx.answerCbQuery("❌ Not eligible", { show_alert: true });
+    }
 
-🎟 Coupons:
-₹500 → ${coupons[500].length}
-₹1000 → ${coupons[1000].length}
-₹2000 → ${coupons[2000].length}
-₹4000 → ${coupons[4000].length}`
-);
-});
+    if (coupons[amt].length === 0) {
+      return ctx.answerCbQuery("❌ Out of stock", { show_alert: true });
+    }
 
-// ===== ADMIN PANEL =====
-bot.onText(/\/adminpanel/, msg => {
-  if (!isAdmin(msg.from.id)) return;
+    const code = coupons[amt].shift();
+    u.points -= rule.points;
+    stats.redeemed++;
 
-  bot.sendMessage(msg.chat.id,
-`👑 ADMIN PANEL
-
-/addbalance userId amount
-/removebalance userId amount
-
-/addcoupon amount
-/removecoupon amount
-
-/stats`
-);
-});
-
-// ===== ADD BALANCE =====
-bot.onText(/\/addbalance (\d+) (\d+)/, (msg, m) => {
-  if (!isAdmin(msg.from.id)) return;
-  initUser(m[1]);
-  users[m[1]].balance += Number(m[2]);
-  bot.sendMessage(msg.chat.id, "✅ Balance Added");
-});
-
-// ===== REMOVE BALANCE =====
-bot.onText(/\/removebalance (\d+) (\d+)/, (msg, m) => {
-  if (!isAdmin(msg.from.id)) return;
-  initUser(m[1]);
-  users[m[1]].balance -= Number(m[2]);
-  if (users[m[1]].balance < 0) users[m[1]].balance = 0;
-  bot.sendMessage(msg.chat.id, "✅ Balance Removed");
-});
-
-// ===== ADD COUPONS (BULK) =====
-bot.onText(/\/addcoupon (\d+)/, (msg, m) => {
-  if (!isAdmin(msg.from.id)) return;
-  const amount = m[1];
-  if (!coupons[amount]) return bot.sendMessage(msg.chat.id, "❌ Invalid amount");
-
-  bot.sendMessage(msg.chat.id, "✍️ Send coupons (space/new line separated)");
-  bot.once("message", reply => {
-    const list = reply.text.split(/\s+/);
-    list.forEach(c => {
-      if (c.length === 15) coupons[amount].push(c);
-    });
-    bot.sendMessage(msg.chat.id, `✅ ${list.length} Coupons Added`);
+    await ctx.reply(
+      `🎉 Redeem Successful\n\n₹${amt} Voucher\n🎟 Code:\n${code}`
+    );
   });
 });
 
-// ===== REMOVE COUPON =====
-bot.onText(/\/removecoupon (\d+)/, (msg, m) => {
-  if (!isAdmin(msg.from.id)) return;
-  coupons[m[1]] = [];
-  bot.sendMessage(msg.chat.id, "🗑 Coupons Removed");
+// ================= ADMIN PANEL =================
+bot.command("adminpanel", (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.reply("❌ Access denied");
+
+  ctx.reply(
+    "🛠 Admin Panel",
+    Markup.keyboard([
+      ["➕ Add Balance", "➖ Remove Balance"],
+      ["🎟 Add Coupons"],
+      ["👑 Add Admin", "📢 Broadcast"]
+    ]).resize()
+  );
 });
 
-// ===== REDEEM =====
-bot.onText(/\/redeem/, msg => {
-  initUser(msg.from.id);
-  const kb = {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "₹500", callback_data: "redeem_500" }],
-        [{ text: "₹1000", callback_data: "redeem_1000" }],
-        [{ text: "₹2000", callback_data: "redeem_2000" }],
-        [{ text: "₹4000", callback_data: "redeem_4000" }]
-      ]
-    }
-  };
-  bot.sendMessage(msg.chat.id, "🎁 Select Voucher", kb);
+bot.hears("➕ Add Balance", (ctx) => {
+  if (!isAdmin(ctx.from.id)) return;
+  adminStep[ctx.from.id] = "ADD_BAL";
+  ctx.reply("Send:\nUSER_ID POINTS");
 });
 
-// ===== REDEEM HANDLER =====
-const rules = { 500:3, 1000:6, 2000:8, 4000:15 };
-
-bot.on("callback_query", q => {
-  const id = q.from.id;
-  initUser(id);
-  const amt = Number(q.data.split("_")[1]);
-
-  if (users[id].refers < rules[amt]) {
-    return bot.answerCallbackQuery(q.id, { text: "❌ Not enough refers" });
-  }
-  if (coupons[amt].length === 0) {
-    return bot.answerCallbackQuery(q.id, { text: "❌ No coupons left" });
-  }
-
-  const code = coupons[amt].shift();
-  users[id].redeemed += 1;
-  totalRedeems++;
-
-  bot.sendMessage(id,
-`🎉 Redeemed Successfully!
-
-💎 Amount: ₹${amt}
-🎟 Code: ${code}`);
+bot.hears("➖ Remove Balance", (ctx) => {
+  if (!isAdmin(ctx.from.id)) return;
+  adminStep[ctx.from.id] = "REM_BAL";
+  ctx.reply("Send:\nUSER_ID POINTS");
 });
+
+bot.hears("🎟 Add Coupons", (ctx) => {
+  if (!isAdmin(ctx.from.id)) return;
+  adminStep[ctx.from.id] = "ADD_CP";
+  ctx.reply("Send:\nAMOUNT\nCOUPON1\nCOUPON2\n...");
+});
+
+bot.hears("👑 Add Admin", (ctx) => {
+  if (!isAdmin(ctx.from.id)) return;
+  adminStep[ctx.from.id] = "ADD_ADMIN";
+  ctx.reply("Send USER_ID");
+});
+
+bot.hears("📢 Broadcast", (ctx) => {
+  if (!isAdmin(ctx.from.id)) return;
+  adminStep[ctx.from.id] = "BC";
+  ctx.reply("Send message");
+});
+
+// ================= START BOT =================
+bot.launch();
+console.log("🤖 BOT RUNNING – FINAL STABLE VERSION");
