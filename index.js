@@ -14,11 +14,12 @@ const CHANNELS = [
   "@Manish_Looterss"
 ];
 
+// ✅ Redeem points updated
 const REDEEM = {
-  500: { points: 5, refer: 3 },
-  1000: { points: 10, refer: 6 },
-  2000: { points: 20, refer: 8 },
-  4000: { points: 40, refer: 15 }
+  500: { points: 3 },
+  1000: { points: 6 },
+  2000: { points: 10 },
+  4000: { points: 15 }
 };
 
 // ================= DATABASE =================
@@ -47,7 +48,7 @@ async function checkJoin(ctx) {
   return true;
 }
 
-// ================= ADMIN PANEL COMMAND =================
+// ================= ADMIN PANEL =================
 bot.command("adminpanel", (ctx) => {
   if (!isAdmin(ctx.from.id)) return ctx.reply("❌ Access denied");
 
@@ -66,13 +67,6 @@ bot.command("adminpanel", (ctx) => {
 bot.start(async (ctx) => {
   const uid = ctx.from.id;
   getUser(uid);
-
-  // Referral
-  if (ctx.startPayload && ctx.startPayload !== uid.toString()) {
-    const ref = getUser(ctx.startPayload);
-    ref.refer += 1;
-    ref.points += 1; // 1 refer = 1 💎
-  }
 
   if (!(await checkJoin(ctx))) {
     return ctx.reply(
@@ -227,10 +221,10 @@ bot.on("text", async (ctx) => {
     return ctx.reply(
       "🎁 Choose Voucher",
       Markup.inlineKeyboard([
-        [Markup.button.callback("₹500 (💎5 | 👥3)", "redeem_500")],
-        [Markup.button.callback("₹1000 (💎10 | 👥6)", "redeem_1000")],
-        [Markup.button.callback("₹2000 (💎20 | 👥8)", "redeem_2000")],
-        [Markup.button.callback("₹4000 (💎40 | 👥15)", "redeem_4000")]
+        [Markup.button.callback("₹500 (💎3)", "redeem_500")],
+        [Markup.button.callback("₹1000 (💎6)", "redeem_1000")],
+        [Markup.button.callback("₹2000 (💎10)", "redeem_2000")],
+        [Markup.button.callback("₹4000 (💎15)", "redeem_4000")]
       ])
     );
   }
@@ -242,8 +236,9 @@ bot.on("text", async (ctx) => {
     const u = getUser(ctx.from.id);
     const rule = REDEEM[amt];
 
-    if (u.points < rule.points || u.refer < rule.refer)
-      return ctx.answerCbQuery("❌ Not eligible", { show_alert: true });
+    // ✅ Only balance check
+    if (u.points < rule.points)
+      return ctx.answerCbQuery("❌ Not enough balance", { show_alert: true });
 
     if (coupons[amt].length === 0)
       return ctx.answerCbQuery("❌ Out of stock", { show_alert: true });
