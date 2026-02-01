@@ -91,7 +91,7 @@ bot.start(async (ctx) => {
 
 bot.action("check_join", async (ctx) => {
   if (await checkJoin(ctx)) {
-    await ctx.editMessageText("✅ Verified! Ab menu use karo");
+    await ctx.editMessageText("✅ Verified! Ab menu use karne Ke Liye /start Pe Click Karo ");
   } else {
     await ctx.answerCbQuery("❌ Abhi join pending", { show_alert: true });
   }
