@@ -26,7 +26,7 @@ admin_state = {}
 def get_user(uid):
     uid = str(uid)
     if uid not in users:
-        users[uid] = {"balance":0}
+        users[uid] = {"balance":0,"refers":[]}
         save("users.json", users)
     return users[uid]
 
@@ -51,15 +51,27 @@ def menu(chat_id):
 # ---------------- START ----------------
 @bot.message_handler(commands=["start"])
 def start(m):
-    uid = m.from_user.id
-    get_user(uid)
+    uid = str(m.from_user.id)
+    u = get_user(uid)
+    args = m.text.split()
 
+    # Referral handling
+    if len(args) > 1:
+        ref_id = args[1]
+        if ref_id != uid:
+            ref_user = get_user(ref_id)
+            if uid not in ref_user["refers"]:
+                ref_user["refers"].append(uid)
+                ref_user["balance"] += 1
+                save("users.json", users)
+
+    # Join check
     if not check_join(uid):
         kb = types.InlineKeyboardMarkup()
         for c in CHANNELS:
             kb.add(types.InlineKeyboardButton(f"Join {c}",url=f"https://t.me/{c.replace('@','')}"))
         kb.add(types.InlineKeyboardButton("✅ I Joined",callback_data="verify"))
-        bot.send_message(uid,"🔒 Pehle sab channels join karo:",reply_markup=kb)
+        bot.send_message(uid,"🔒 Join all channels first:",reply_markup=kb)
         return
 
     menu(uid)
@@ -75,69 +87,76 @@ def verify(c):
 # ---------------- USER ----------------
 @bot.message_handler(func=lambda m:m.text=="👤 Profile")
 def profile(m):
-    u=get_user(m.from_user.id)
-    bot.send_message(m.chat.id,f"👤 Profile\n\n💎 Balance: {u['balance']}")
+    u = get_user(m.from_user.id)
+    bot.send_message(m.chat.id,
+        f"👤 Profile\n\n💎 Balance: {u['balance']}\n👥 Refers: {len(u.get('refers',[]))}\n\n🔗 Referral Link:\nhttps://t.me/{bot.get_me().username}?start={m.from_user.id}"
+    )
 
 @bot.message_handler(func=lambda m:m.text=="🔗 Refer")
 def refer(m):
     bot.send_message(m.chat.id,
-        f"https://t.me/{bot.get_me().username}?start={m.from_user.id}"
+        f"Invite link:\nhttps://t.me/{bot.get_me().username}?start={m.from_user.id}"
     )
 
 @bot.message_handler(func=lambda m:m.text=="❓ Help")
-def help(m):
+def help_(m):
     bot.send_message(m.chat.id,
-        "ℹ️ Join channels → earn balance → redeem vouchers"
+        "ℹ️ How to use:\n1️⃣ Join all channels\n2️⃣ Refer friends to earn 💎\n3️⃣ Redeem vouchers using balance"
     )
 
-# ---------------- REDEEM (FIXED) ----------------
+@bot.message_handler(func=lambda m:m.text=="📊 Stats")
+def stats(m):
+    bot.send_message(m.chat.id,
+        f"📊 Total Users: {len(users)}"
+    )
+
+# ---------------- REDEEM ----------------
 @bot.message_handler(func=lambda m:m.text=="🎁 Redeem")
 def redeem_menu(m):
-    kb=types.InlineKeyboardMarkup()
+    kb = types.InlineKeyboardMarkup()
     for amt,pts in REDEEM_POINTS.items():
         kb.add(types.InlineKeyboardButton(f"₹{amt} – {pts}💎",callback_data=f"redeem_{amt}"))
     bot.send_message(m.chat.id,"🎁 Choose voucher:",reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c:c.data.startswith("redeem_"))
 def redeem(c):
-    amt=c.data.split("_")[1]
-    u=get_user(c.from_user.id)
-    need=REDEEM_POINTS[int(amt)]
+    amt = c.data.split("_")[1]
+    u = get_user(c.from_user.id)
+    need = REDEEM_POINTS[int(amt)]
 
-    if u["balance"]<need:
+    if u["balance"] < need:
         bot.answer_callback_query(c.id,"❌ Insufficient balance",True)
         return
-
     if len(vouchers[amt])==0:
         bot.answer_callback_query(c.id,"❌ Voucher out of stock",True)
         return
 
-    code=vouchers[amt].pop(0)  # 🔥 permanently removed
-    u["balance"]-=need
+    code = vouchers[amt].pop(0)  # permanently removed
+    u["balance"] -= need
 
     save("users.json",users)
     save("vouchers.json",vouchers)
 
     bot.send_message(c.from_user.id,
-        f"🎉 Redeemed ₹{amt}\n\n🎟 Coupon:\n<code>{code}</code>"
+        f"🎉 Redeemed ₹{amt}\n🎟 Coupon:\n<code>{code}</code>"
     )
 
 # ---------------- ADMIN PANEL ----------------
 @bot.message_handler(commands=["adminpanel"])
 def adminpanel(m):
     if not is_admin(m.from_user.id): return
-    kb=types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("➕ Add Balance","➖ Remove Balance")
     kb.row("🎟 Add Coupons","📊 Voucher Stats")
-    kb.row("📢 Broadcast")
+    kb.row("📈 Leaderboard","📢 Broadcast")
     bot.send_message(m.chat.id,"🛠 Admin Panel",reply_markup=kb)
 
 @bot.message_handler(func=lambda m:m.text=="📊 Voucher Stats")
 def vstats(m):
     if not is_admin(m.from_user.id): return
-    text="🎟 Voucher Stock\n\n"
+    text = "🎟 Voucher Stock (Admin Only)\n\n"
     for k,v in vouchers.items():
-        text+=f"₹{k}: {len(v)} coupons\n"
+        text += f"₹{k}: {len(v)} coupons\n"
     bot.send_message(m.chat.id,text)
 
 @bot.message_handler(func=lambda m:m.text=="🎟 Add Coupons")
@@ -164,26 +183,35 @@ def bc(m):
     admin_state[m.from_user.id]="BC"
     bot.send_message(m.chat.id,"Send broadcast message")
 
+@bot.message_handler(func=lambda m:m.text=="📈 Leaderboard")
+def leaderboard(m):
+    if not is_admin(m.from_user.id): return
+    top = sorted(users.items(), key=lambda x: x[1]["balance"], reverse=True)[:10]
+    text = "🏆 Leaderboard (Admin Only)\n\n"
+    for i,(uid,data) in enumerate(top,1):
+        text += f"{i}. {uid} — 💎 {data['balance']}\n"
+    bot.send_message(m.chat.id,text)
+
 @bot.message_handler(func=lambda m:m.from_user.id in admin_state)
 def admin_input(m):
-    st=admin_state[m.from_user.id]
+    st = admin_state[m.from_user.id]
 
     if st=="ADD_CP":
-        lines=m.text.splitlines()
-        amt=lines[0]
+        lines = m.text.splitlines()
+        amt = lines[0]
         for c in lines[1:]:
             if len(c)==15:
                 vouchers[amt].append(c)
         save("vouchers.json",vouchers)
 
     elif st=="ADD_BAL":
-        uid,amt=m.text.split()
-        get_user(uid)["balance"]+=int(amt)
+        uid,amt = m.text.split()
+        get_user(uid)["balance"] += int(amt)
         save("users.json",users)
 
     elif st=="REM_BAL":
-        uid,amt=m.text.split()
-        get_user(uid)["balance"]=max(0,get_user(uid)["balance"]-int(amt))
+        uid,amt = m.text.split()
+        get_user(uid)["balance"] = max(0,get_user(uid)["balance"]-int(amt))
         save("users.json",users)
 
     elif st=="BC":
