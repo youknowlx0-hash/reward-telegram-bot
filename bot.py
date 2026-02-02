@@ -3,8 +3,8 @@ from telebot import types
 import json, os
 from config import ADMINS, CHANNELS, REDEEM_POINTS
 
-BOT_TOKEN = os.getenv("8183101684:AAGlpAwQDYMTOCVVBCre9LiZK82YQ1t7jl8")
-bot = telebot.TeleBot(8183101684:AAGlpAwQDYMTOCVVBCre9LiZK82YQ1t7jl8, parse_mode="HTML")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # ------------------ JSON helpers ------------------
 def load_json(file, default):
