@@ -26,7 +26,7 @@ admin_state = {}
 def get_user(uid):
     uid = str(uid)
     if uid not in users:
-        users[uid] = {"balance":0,"refers":[]}
+        users[uid] = {"balance":0,"refers":[],"started":False,"referred_by":None}
         save("users.json", users)
     return users[uid]
 
@@ -55,15 +55,26 @@ def start(m):
     u = get_user(uid)
     args = m.text.split()
 
-    # Referral handling
+    # --------- Unique Start Check ---------
+    if u.get("started", False):
+        bot.send_message(uid,"⚠️ You have already used this bot")
+        return
+    u["started"] = True  # mark first start
+
+    # --------- Referral handling (only first time) ---------
     if len(args) > 1:
         ref_id = args[1]
-        if ref_id != uid:
+        if ref_id != uid and ref_id in users:
             ref_user = get_user(ref_id)
-            if uid not in ref_user["refers"]:
-                ref_user["refers"].append(uid)
+            if u.get("referred_by") is None:
+                u["referred_by"] = ref_id
                 ref_user["balance"] += 1
+                ref_user.setdefault("refers", []).append(uid)
                 save("users.json", users)
+                # Notify referrer
+                bot.send_message(int(ref_id),
+                    f"🎉 New Referral!\n👤 User: {m.from_user.first_name}\n💎 +1 Point added"
+                )
 
     # Join check
     if not check_join(uid):
