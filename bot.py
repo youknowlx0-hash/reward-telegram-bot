@@ -55,26 +55,26 @@ def start(m):
     u = get_user(uid)
     args = m.text.split()
 
-    # --------- Unique Start Check ---------
+    # --------- Already used warning ---------
     if u.get("started", False):
-        bot.send_message(uid,"⚠️ You have already used this bot")
-        return
-    u["started"] = True  # mark first start
+        bot.send_message(uid,"⚠️ You have already used this bot before, but you can still use it 😉")
+    else:
+        u["started"] = True  # mark first start
 
-    # --------- Referral handling (only first time) ---------
-    if len(args) > 1:
-        ref_id = args[1]
-        if ref_id != uid and ref_id in users:
-            ref_user = get_user(ref_id)
-            if u.get("referred_by") is None:
-                u["referred_by"] = ref_id
-                ref_user["balance"] += 1
-                ref_user.setdefault("refers", []).append(uid)
-                save("users.json", users)
-                # Notify referrer
-                bot.send_message(int(ref_id),
-                    f"🎉 New Referral!\n👤 User: {m.from_user.first_name}\n💎 +1 Point added"
-                )
+        # --------- Referral handling (only first time) ---------
+        if len(args) > 1:
+            ref_id = args[1]
+            if ref_id != uid and ref_id in users:
+                ref_user = get_user(ref_id)
+                if u.get("referred_by") is None:
+                    u["referred_by"] = ref_id
+                    ref_user["balance"] += 1
+                    ref_user.setdefault("refers", []).append(uid)
+                    save("users.json", users)
+                    # Notify referrer
+                    bot.send_message(int(ref_id),
+                        f"🎉 New Referral!\n👤 User: {m.from_user.first_name}\n💎 +1 Point added"
+                    )
 
     # Join check
     if not check_join(uid):
