@@ -2,9 +2,9 @@ ADMINS = [7702942505]
 
 CHANNELS = [
     "@Shein_Reward",
-    "@earnmoneysupport1",
+    "@Manish_Looterss",
     "@GlobalTaskWorks",
-    "@Manish_Looterss"
+    "@sheinlinks202"
 ]
 
 REDEEM_POINTS = {
