@@ -2,7 +2,7 @@ ADMINS = [7702942505]
 
 CHANNELS = [
     "@Shein_Reward",
-    "@Vip_Zrl_Hack",
+    "@Manish_Looterss",
     "@GlobalTaskWorks",
     "@sheinlinks202"
 ]
