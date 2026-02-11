@@ -1,6 +1,6 @@
 import telebot
 from telebot import types
-import json, os, time
+import json, os
 from config import ADMINS, CHANNELS, REDEEM_POINTS
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -75,22 +75,27 @@ def start(m):
         force_join(m.chat.id)
         return
 
-    # First time referral only
+    # First time only
     if not u["started"]:
         u["started"] = True
 
         if len(args) > 1:
             ref_id = args[1]
-            if ref_id != uid and ref_id in users:
-                if u["referred_by"] is None:
+
+            if ref_id != uid and u["referred_by"] is None:
+                ref_user = get_user(ref_id)
+
+                if uid not in ref_user["refers"]:
                     u["referred_by"] = ref_id
-                    ref_user = get_user(ref_id)
                     ref_user["balance"] += 1
                     ref_user["refers"].append(uid)
 
-                    bot.send_message(int(ref_id),
-                        f"🎉 New Valid Referral!\n👤 {m.from_user.first_name}\n💎 +1 Point"
-                    )
+                    try:
+                        bot.send_message(int(ref_id),
+                            f"🎉 New Valid Referral!\n👤 {m.from_user.first_name}\n💎 +1 Point"
+                        )
+                    except:
+                        pass
     else:
         bot.send_message(m.chat.id,
             "⚠️ You already used this bot.\nBut you can continue using it."
@@ -108,7 +113,7 @@ def verify(c):
     else:
         bot.answer_callback_query(c.id,"❌ Join all channels",True)
 
-# ---------------- JOIN CHECK ----------------
+# ---------------- JOIN REQUIRED DECORATOR ----------------
 def join_required(func):
     def wrapper(m):
         if not check_join(m.from_user.id):
@@ -158,6 +163,7 @@ def redeem_menu(m):
 
 @bot.callback_query_handler(func=lambda c:c.data.startswith("redeem_"))
 def redeem(c):
+
     if not check_join(c.from_user.id):
         bot.answer_callback_query(c.id,"Join channels first",True)
         return
@@ -218,13 +224,20 @@ def add_coupons(m):
 @bot.message_handler(func=lambda m:m.text=="📈 Leaderboard")
 def leaderboard(m):
     if not is_admin(m.from_user.id): return
-    top = sorted(users.items(),
-                 key=lambda x: x[1]["balance"],
-                 reverse=True)[:10]
+
+    if not users:
+        bot.send_message(m.chat.id,"No users yet.")
+        return
+
+    top = sorted(
+        users.items(),
+        key=lambda x: x[1].get("balance",0),
+        reverse=True
+    )[:10]
 
     text = "🏆 Leaderboard\n\n"
     for i,(uid,data) in enumerate(top,1):
-        text += f"{i}. {uid} — 💎 {data['balance']}\n"
+        text += f"{i}. {uid} — 💎 {data.get('balance',0)}\n"
 
     bot.send_message(m.chat.id,text)
 
@@ -262,9 +275,17 @@ def admin_input(m):
 
     elif state == "ADD_CP":
         lines = m.text.splitlines()
-        amt = lines[0]
+        amt = lines[0].strip()
+
+        if amt not in vouchers:
+            bot.send_message(m.chat.id,"Invalid amount")
+            return
+
         for c in lines[1:]:
-            vouchers[amt].append(c.strip())
+            code = c.strip()
+            if code and code not in vouchers[amt]:
+                vouchers[amt].append(code)
+
         save("vouchers.json",vouchers)
 
     elif state == "BC":
