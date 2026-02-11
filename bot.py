@@ -30,14 +30,13 @@ def get_user(uid):
             "balance":0,
             "refers":[],
             "started":False,
-            "referred_by":None,
-            "start_time":0
+            "referred_by":None
         }
         save("users.json", users)
     return users[uid]
 
 def is_admin(uid):
-    return uid in ADMINS
+    return int(uid) in ADMINS
 
 def check_join(uid):
     for ch in CHANNELS:
@@ -49,12 +48,15 @@ def check_join(uid):
             return False
     return True
 
-def force_join(msg):
+def force_join(chat_id):
     kb = types.InlineKeyboardMarkup()
     for c in CHANNELS:
-        kb.add(types.InlineKeyboardButton(f"Join {c}",url=f"https://t.me/{c.replace('@','')}"))
+        kb.add(types.InlineKeyboardButton(
+            f"Join {c}",
+            url=f"https://t.me/{c.replace('@','')}"
+        ))
     kb.add(types.InlineKeyboardButton("✅ I Joined",callback_data="verify"))
-    bot.send_message(msg.chat.id,"🔒 Join all channels first:",reply_markup=kb)
+    bot.send_message(chat_id,"🔒 Join all channels first:",reply_markup=kb)
 
 def menu(chat_id):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -69,32 +71,33 @@ def start(m):
     u = get_user(uid)
     args = m.text.split()
 
-    if not check_join(uid):
-        force_join(m)
+    if not check_join(m.from_user.id):
+        force_join(m.chat.id)
         return
 
+    # First time referral only
     if not u["started"]:
         u["started"] = True
-        u["start_time"] = time.time()
 
         if len(args) > 1:
             ref_id = args[1]
             if ref_id != uid and ref_id in users:
-                ref_user = get_user(ref_id)
                 if u["referred_by"] is None:
                     u["referred_by"] = ref_id
+                    ref_user = get_user(ref_id)
                     ref_user["balance"] += 1
                     ref_user["refers"].append(uid)
-                    save("users.json", users)
 
                     bot.send_message(int(ref_id),
                         f"🎉 New Valid Referral!\n👤 {m.from_user.first_name}\n💎 +1 Point"
                     )
     else:
-        bot.send_message(uid,"⚠️ You already used this bot\nBut you can continue using it.")
+        bot.send_message(m.chat.id,
+            "⚠️ You already used this bot.\nBut you can continue using it."
+        )
 
     save("users.json", users)
-    menu(uid)
+    menu(m.chat.id)
 
 # ---------------- VERIFY ----------------
 @bot.callback_query_handler(func=lambda c:c.data=="verify")
@@ -105,11 +108,11 @@ def verify(c):
     else:
         bot.answer_callback_query(c.id,"❌ Join all channels",True)
 
-# ---------------- JOIN CHECK DECORATOR ----------------
+# ---------------- JOIN CHECK ----------------
 def join_required(func):
     def wrapper(m):
         if not check_join(m.from_user.id):
-            force_join(m)
+            force_join(m.chat.id)
             return
         return func(m)
     return wrapper
@@ -120,7 +123,11 @@ def join_required(func):
 def profile(m):
     u = get_user(m.from_user.id)
     bot.send_message(m.chat.id,
-        f"👤 Profile\n\n💎 Balance: {u['balance']}\n👥 Refers: {len(u['refers'])}\n\n🔗 Referral:\nhttps://t.me/{bot.get_me().username}?start={m.from_user.id}"
+        f"👤 Profile\n\n"
+        f"💎 Balance: {u['balance']}\n"
+        f"👥 Refers: {len(u['refers'])}\n\n"
+        f"🔗 Referral:\n"
+        f"https://t.me/{bot.get_me().username}?start={m.from_user.id}"
     )
 
 @bot.message_handler(func=lambda m:m.text=="🔗 Refer")
@@ -143,7 +150,10 @@ def help_(m):
 def redeem_menu(m):
     kb = types.InlineKeyboardMarkup()
     for amt,pts in REDEEM_POINTS.items():
-        kb.add(types.InlineKeyboardButton(f"₹{amt} – {pts}💎",callback_data=f"redeem_{amt}"))
+        kb.add(types.InlineKeyboardButton(
+            f"₹{amt} – {pts}💎",
+            callback_data=f"redeem_{amt}"
+        ))
     bot.send_message(m.chat.id,"Choose voucher:",reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c:c.data.startswith("redeem_"))
@@ -159,6 +169,7 @@ def redeem(c):
     if u["balance"] < need:
         bot.answer_callback_query(c.id,"Insufficient balance",True)
         return
+
     if len(vouchers[amt]) == 0:
         bot.answer_callback_query(c.id,"Out of stock",True)
         return
@@ -173,18 +184,52 @@ def redeem(c):
         f"🎉 Redeemed ₹{amt}\n🎟 <code>{code}</code>"
     )
 
-# ---------------- ADMIN ----------------
+# ---------------- ADMIN PANEL ----------------
 @bot.message_handler(commands=["adminpanel"])
 def adminpanel(m):
     if not is_admin(m.from_user.id): return
+
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("➕ Add Balance","➖ Remove Balance")
     kb.row("🎟 Add Coupons","📊 Voucher Stats")
     kb.row("📈 Leaderboard","📢 Broadcast")
-    bot.send_message(m.chat.id,"Admin Panel",reply_markup=kb)
+
+    bot.send_message(m.chat.id,"🛠 Admin Panel",reply_markup=kb)
+
+# -------- ADMIN COMMANDS --------
+@bot.message_handler(func=lambda m:m.text=="➕ Add Balance")
+def add_balance(m):
+    if not is_admin(m.from_user.id): return
+    admin_state[m.from_user.id] = "ADD_BAL"
+    bot.send_message(m.chat.id,"Send: USER_ID AMOUNT")
+
+@bot.message_handler(func=lambda m:m.text=="➖ Remove Balance")
+def remove_balance(m):
+    if not is_admin(m.from_user.id): return
+    admin_state[m.from_user.id] = "REM_BAL"
+    bot.send_message(m.chat.id,"Send: USER_ID AMOUNT")
+
+@bot.message_handler(func=lambda m:m.text=="🎟 Add Coupons")
+def add_coupons(m):
+    if not is_admin(m.from_user.id): return
+    admin_state[m.from_user.id] = "ADD_CP"
+    bot.send_message(m.chat.id,"Send:\nAMOUNT\nCOUPON1\nCOUPON2...")
+
+@bot.message_handler(func=lambda m:m.text=="📈 Leaderboard")
+def leaderboard(m):
+    if not is_admin(m.from_user.id): return
+    top = sorted(users.items(),
+                 key=lambda x: x[1]["balance"],
+                 reverse=True)[:10]
+
+    text = "🏆 Leaderboard\n\n"
+    for i,(uid,data) in enumerate(top,1):
+        text += f"{i}. {uid} — 💎 {data['balance']}\n"
+
+    bot.send_message(m.chat.id,text)
 
 @bot.message_handler(func=lambda m:m.text=="📊 Voucher Stats")
-def vstats(m):
+def voucher_stats(m):
     if not is_admin(m.from_user.id): return
     text = "Voucher Stock:\n\n"
     for k,v in vouchers.items():
@@ -192,19 +237,45 @@ def vstats(m):
     bot.send_message(m.chat.id,text)
 
 @bot.message_handler(func=lambda m:m.text=="📢 Broadcast")
-def bc(m):
+def broadcast(m):
     if not is_admin(m.from_user.id): return
-    admin_state[m.from_user.id]="BC"
-    bot.send_message(m.chat.id,"Send message")
+    admin_state[m.from_user.id] = "BC"
+    bot.send_message(m.chat.id,"Send broadcast message")
 
+# -------- ADMIN INPUT HANDLER --------
 @bot.message_handler(func=lambda m:m.from_user.id in admin_state)
 def admin_input(m):
-    if admin_state[m.from_user.id]=="BC":
-        for u in users:
-            try: bot.send_message(u,m.text)
-            except: pass
+    state = admin_state[m.from_user.id]
+
+    if state == "ADD_BAL":
+        uid, amt = m.text.split()
+        get_user(uid)["balance"] += int(amt)
+        save("users.json",users)
+
+    elif state == "REM_BAL":
+        uid, amt = m.text.split()
+        get_user(uid)["balance"] = max(
+            0,
+            get_user(uid)["balance"] - int(amt)
+        )
+        save("users.json",users)
+
+    elif state == "ADD_CP":
+        lines = m.text.splitlines()
+        amt = lines[0]
+        for c in lines[1:]:
+            vouchers[amt].append(c.strip())
+        save("vouchers.json",vouchers)
+
+    elif state == "BC":
+        for uid in users:
+            try:
+                bot.send_message(uid,m.text)
+            except:
+                pass
+
     admin_state.pop(m.from_user.id)
-    bot.send_message(m.chat.id,"Done")
+    bot.send_message(m.chat.id,"✅ Done")
 
 print("Bot Running...")
 bot.infinity_polling()
