@@ -4,7 +4,7 @@ CHANNELS = [
     "@Shein_Reward",
     "@SheinStockss",
     "@sheinverse052",
-    "@sheinlinks202"
+    "@sheinlinks202",
     "@kuaishouWorks"
 ]
 
