@@ -5,6 +5,7 @@ CHANNELS = [
     "@SheinStockss",
     "@sheinverse052",
     "@sheinlinks202"
+    "@kuaishouWorks"
 ]
 
 REDEEM_POINTS = {
