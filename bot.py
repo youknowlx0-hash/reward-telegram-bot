@@ -151,7 +151,6 @@ def refer(m):
 @join_required
 def stats(m):
     total_users = len(users)
-
     total_redeemed = 0
     users_redeemed = 0
 
@@ -167,12 +166,6 @@ def stats(m):
         f"🎁 Total Vouchers Redeemed: {total_redeemed}\n"
         f"👤 Users Redeemed: {users_redeemed}"
     )
-
-# ---------------- HELP ----------------
-@bot.message_handler(func=lambda m:m.text=="❓ Help")
-@join_required
-def help_(m):
-    bot.send_message(m.chat.id,"Refer friends and redeem vouchers.")
 
 # ---------------- REDEEM ----------------
 @bot.message_handler(func=lambda m:m.text=="🎁 Redeem")
@@ -228,6 +221,65 @@ def adminpanel(m):
     kb.row("📈 Leaderboard","📢 Broadcast")
 
     bot.send_message(m.chat.id,"🛠 Admin Panel",reply_markup=kb)
+
+@bot.message_handler(func=lambda m:m.text in ["➕ Add Balance","➖ Remove Balance","🎟 Add Coupons","📢 Broadcast"])
+def admin_actions(m):
+    if not is_admin(m.from_user.id): return
+
+    if m.text=="➕ Add Balance":
+        admin_state[m.from_user.id]="ADD"
+        bot.send_message(m.chat.id,"Send: USER_ID AMOUNT")
+
+    elif m.text=="➖ Remove Balance":
+        admin_state[m.from_user.id]="REM"
+        bot.send_message(m.chat.id,"Send: USER_ID AMOUNT")
+
+    elif m.text=="🎟 Add Coupons":
+        admin_state[m.from_user.id]="CP"
+        bot.send_message(m.chat.id,"Send:\nAMOUNT\nCODE1\nCODE2")
+
+    elif m.text=="📢 Broadcast":
+        admin_state[m.from_user.id]="BC"
+        bot.send_message(m.chat.id,"Send broadcast message")
+
+@bot.message_handler(func=lambda m:m.from_user.id in admin_state)
+def admin_input(m):
+    state = admin_state[m.from_user.id]
+
+    try:
+        if state=="ADD":
+            uid,amt=m.text.split()
+            get_user(uid)["balance"]+=int(amt)
+            save("users.json",users)
+            bot.send_message(m.chat.id,"✅ Added")
+
+        elif state=="REM":
+            uid,amt=m.text.split()
+            get_user(uid)["balance"]=max(0,get_user(uid)["balance"]-int(amt))
+            save("users.json",users)
+            bot.send_message(m.chat.id,"✅ Removed")
+
+        elif state=="CP":
+            lines=m.text.splitlines()
+            amt=lines[0]
+            for c in lines[1:]:
+                vouchers[amt].append(c.strip())
+            save("vouchers.json",vouchers)
+            bot.send_message(m.chat.id,"✅ Coupons Added")
+
+        elif state=="BC":
+            sent=0
+            for uid in users:
+                try:
+                    bot.send_message(uid,m.text)
+                    sent+=1
+                except: pass
+            bot.send_message(m.chat.id,f"Sent to {sent}")
+
+    except:
+        bot.send_message(m.chat.id,"❌ Format Wrong")
+
+    admin_state.pop(m.from_user.id)
 
 print("Bot Running...")
 bot.infinity_polling()
