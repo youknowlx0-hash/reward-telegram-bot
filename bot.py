@@ -1,49 +1,66 @@
 import telebot
 from telebot import types
-import json, os
+import sqlite3
+import os
 from config import ADMINS, CHANNELS, REDEEM_POINTS
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-# ---------------- FILE SYSTEM ----------------
-def load(file, default):
-    if not os.path.exists(file):
-        with open(file,"w") as f:
-            json.dump(default,f)
-    with open(file) as f:
-        return json.load(f)
+# ---------------- DATABASE ----------------
 
-def save(file,data):
-    with open(file,"w") as f:
-        json.dump(data,f,indent=2)
+conn = sqlite3.connect("database.db", check_same_thread=False)
+cursor = conn.cursor()
 
-users = load("users.json", {})
-vouchers = load("vouchers.json", {"500":[],"1000":[],"2000":[],"4000":[]})
-admin_state = {}
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    balance INTEGER DEFAULT 0,
+    referred_by TEXT,
+    redeemed INTEGER DEFAULT 0
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS referrals (
+    referrer TEXT,
+    referred TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS vouchers (
+    amount TEXT,
+    code TEXT
+)
+""")
+
+conn.commit()
 
 # ---------------- USER SYSTEM ----------------
+
 def get_user(uid):
     uid = str(uid)
-    if uid not in users:
-        users[uid] = {
-            "balance":0,
-            "refers":[],
-            "referred_by":None,
-            "redeemed":0
-        }
-        save("users.json", users)
-    return users[uid]
+    cursor.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    user = cursor.fetchone()
+
+    if not user:
+        cursor.execute("INSERT INTO users (user_id) VALUES (?)", (uid,))
+        conn.commit()
+
+    cursor.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    return cursor.fetchone()
 
 def is_admin(uid):
     return int(uid) in ADMINS
 
 # ---------------- CHANNEL CHECK ----------------
+
 def check_join(uid):
     for ch in CHANNELS:
         try:
             member = bot.get_chat_member(ch, uid)
-            if member.status in ["left","kicked"]:
+            if member.status in ["left", "kicked"]:
                 return False
         except:
             return False
@@ -57,182 +74,133 @@ def force_join(chat_id):
             url=f"https://t.me/{ch.replace('@','')}"
         ))
     kb.add(types.InlineKeyboardButton("⚡ VERIFY ACCESS", callback_data="verify"))
+
     bot.send_message(
         chat_id,
-        "🌑 <b>NEON ACCESS LOCKED</b>\n\n"
-        "🟢 Join all official channels to unlock the system.",
+        "Join all channels to continue.",
         reply_markup=kb
     )
 
 # ---------------- MENU ----------------
+
 def menu(chat_id):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row("👤 ᴍʏ ᴘʀᴏꜰɪʟᴇ","🎁 ʀᴇᴅᴇᴇᴍ")
-    kb.row("🔗 ɪɴᴠɪᴛᴇ","📊 ꜱᴛᴀᴛꜱ")
-    kb.row("❓ ꜱᴜᴘᴘᴏʀᴛ")
-    bot.send_message(
-        chat_id,
-        "🌑 <b>DARK NEON REWARDS SYSTEM</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🟢 Status: <b>ONLINE</b>\n"
-        "⚡ Select command below:",
-        reply_markup=kb
-    )
+    kb.row("👤 My Profile","🎁 Redeem")
+    kb.row("🔗 Invite","📊 Stats")
+    bot.send_message(chat_id, "Select option:", reply_markup=kb)
 
 # ---------------- START ----------------
+
 @bot.message_handler(commands=["start"])
 def start(m):
     uid = str(m.from_user.id)
-    user = get_user(uid)
     args = m.text.split()
 
     if not check_join(m.from_user.id):
         force_join(m.chat.id)
         return
 
+    get_user(uid)
+
     if len(args) > 1:
         ref_id = args[1]
 
-        if ref_id != uid and user["referred_by"] is None:
-            ref_user = get_user(ref_id)
+        if ref_id != uid:
+            cursor.execute("SELECT referred_by FROM users WHERE user_id=?", (uid,))
+            already = cursor.fetchone()[0]
 
-            if uid not in ref_user["refers"]:
-                user["referred_by"] = ref_id
-                ref_user["refers"].append(uid)
-                ref_user["balance"] += 1
+            if already is None:
+                cursor.execute("UPDATE users SET referred_by=? WHERE user_id=?", (ref_id, uid))
+                cursor.execute("INSERT INTO referrals (referrer,referred) VALUES (?,?)", (ref_id, uid))
+                cursor.execute("UPDATE users SET balance=balance+1 WHERE user_id=?", (ref_id,))
+                conn.commit()
 
-                save("users.json", users)
-
-                try:
-                    bot.send_message(
-                        int(ref_id),
-                        f"🟢 <b>NEW REFERRAL DETECTED</b>\n"
-                        f"👤 {m.from_user.first_name}\n"
-                        f"⚡ +1 POINT ADDED"
-                    )
-                except:
-                    pass
-
-    save("users.json", users)
     menu(m.chat.id)
 
-# ---------------- VERIFY ----------------
-@bot.callback_query_handler(func=lambda c:c.data=="verify")
-def verify(c):
-    if check_join(c.from_user.id):
-        bot.answer_callback_query(c.id,"🟢 ACCESS GRANTED")
-        menu(c.from_user.id)
-    else:
-        bot.answer_callback_query(c.id,"🔴 ACCESS DENIED",True)
-
-# ---------------- JOIN DECORATOR ----------------
-def join_required(func):
-    def wrapper(m):
-        if not check_join(m.from_user.id):
-            force_join(m.chat.id)
-            return
-        return func(m)
-    return wrapper
-
 # ---------------- PROFILE ----------------
-@bot.message_handler(func=lambda m:m.text=="👤 ᴍʏ ᴘʀᴏꜰɪʟᴇ")
-@join_required
+
+@bot.message_handler(func=lambda m:m.text=="👤 My Profile")
 def profile(m):
-    u = get_user(m.from_user.id)
+    if not check_join(m.from_user.id):
+        force_join(m.chat.id)
+        return
+
+    uid = str(m.from_user.id)
+    cursor.execute("SELECT balance, redeemed FROM users WHERE user_id=?", (uid,))
+    data = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(*) FROM referrals WHERE referrer=?", (uid,))
+    ref_count = cursor.fetchone()[0]
 
     bot.send_message(
         m.chat.id,
-        "🌑 <b>USER TERMINAL</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 POINTS: <b>{u['balance']}</b>\n"
-        f"👥 REFERRALS: <b>{len(u['refers'])}</b>\n"
-        f"🎁 REDEEMED: <b>{u['redeemed']}</b>\n\n"
-        "🔗 INVITE LINK:\n"
-        f"https://t.me/{bot.get_me().username}?start={m.from_user.id}"
-    )
-
-# ---------------- REFER ----------------
-@bot.message_handler(func=lambda m:m.text=="🔗 ɪɴᴠɪᴛᴇ")
-@join_required
-def refer(m):
-    bot.send_message(
-        m.chat.id,
-        "⚡ <b>INVITE PROTOCOL ACTIVE</b>\n\n"
-        "Share link to earn points:\n"
-        f"https://t.me/{bot.get_me().username}?start={m.from_user.id}"
-    )
-
-# ---------------- STATS ----------------
-@bot.message_handler(func=lambda m:m.text=="📊 ꜱᴛᴀᴛꜱ")
-@join_required
-def stats(m):
-    total_users = len(users)
-    total_redeemed = 0
-    users_redeemed = 0
-
-    for u in users.values():
-        if u.get("redeemed",0) > 0:
-            users_redeemed += 1
-            total_redeemed += u.get("redeemed",0)
-
-    bot.send_message(
-        m.chat.id,
-        "🌑 <b>GLOBAL SYSTEM STATS</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"👥 USERS: <b>{total_users}</b>\n"
-        f"🎁 TOTAL REDEEMED: <b>{total_redeemed}</b>\n"
-        f"🟢 ACTIVE REDEEMERS: <b>{users_redeemed}</b>"
+        f"Points: {data[0]}\n"
+        f"Referrals: {ref_count}\n"
+        f"Redeemed: {data[1]}\n\n"
+        f"https://t.me/{bot.get_me().username}?start={uid}"
     )
 
 # ---------------- REDEEM ----------------
-@bot.message_handler(func=lambda m:m.text=="🎁 ʀᴇᴅᴇᴇᴍ")
-@join_required
+
+@bot.message_handler(func=lambda m:m.text=="🎁 Redeem")
 def redeem_menu(m):
     kb = types.InlineKeyboardMarkup()
     for amt,pts in REDEEM_POINTS.items():
         kb.add(types.InlineKeyboardButton(
-            f"🟢 ₹{amt}  ⚡ {pts} PTS",
+            f"₹{amt} - {pts} pts",
             callback_data=f"redeem_{amt}"
         ))
-    bot.send_message(
-        m.chat.id,
-        "🎁 <b>SELECT REWARD MODULE</b>",
-        reply_markup=kb
-    )
+    bot.send_message(m.chat.id,"Select reward:",reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c:c.data.startswith("redeem_"))
 def redeem(c):
-
     if not check_join(c.from_user.id):
-        bot.answer_callback_query(c.id,"Join channels first",True)
+        bot.answer_callback_query(c.id,"Join first",True)
         return
 
     amt = c.data.split("_")[1]
-    u = get_user(c.from_user.id)
+    uid = str(c.from_user.id)
+
     need = REDEEM_POINTS[int(amt)]
 
-    if u["balance"] < need:
-        bot.answer_callback_query(c.id,"🔴 INSUFFICIENT POINTS",True)
+    cursor.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+    balance = cursor.fetchone()[0]
+
+    if balance < need:
+        bot.answer_callback_query(c.id,"Not enough points",True)
         return
 
-    if len(vouchers[amt]) == 0:
-        bot.answer_callback_query(c.id,"⚠ OUT OF STOCK",True)
+    cursor.execute("SELECT code FROM vouchers WHERE amount=? LIMIT 1", (amt,))
+    row = cursor.fetchone()
+
+    if not row:
+        bot.answer_callback_query(c.id,"Out of stock",True)
         return
 
-    code = vouchers[amt].pop(0)
-    u["balance"] -= need
-    u["redeemed"] += 1
+    code = row[0]
 
-    save("users.json",users)
-    save("vouchers.json",vouchers)
+    cursor.execute("DELETE FROM vouchers WHERE code=?", (code,))
+    cursor.execute("UPDATE users SET balance=balance-?, redeemed=redeemed+1 WHERE user_id=?", (need, uid))
+    conn.commit()
 
-    bot.send_message(
-        c.from_user.id,
-        "🟢 <b>REWARD UNLOCKED</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"💳 AMOUNT: ₹{amt}\n"
-        f"🎟 CODE:\n<code>{code}</code>"
-    )
+    bot.send_message(c.from_user.id,f"Your Code:\n<code>{code}</code>")
 
-print("Dark Neon Bot Running...")
-bot.infinity_polling()
+# ---------------- ADMIN ADD CODE ----------------
+
+@bot.message_handler(commands=["addcode"])
+def addcode(m):
+    if not is_admin(m.from_user.id):
+        return
+
+    try:
+        _, amt, code = m.text.split(maxsplit=2)
+        cursor.execute("INSERT INTO vouchers (amount,code) VALUES (?,?)", (amt, code))
+        conn.commit()
+        bot.reply_to(m,"Added ✅")
+    except:
+        bot.reply_to(m,"Usage: /addcode 500 CODE123")
+
+# ---------------- RUN ----------------
+
+print("Bot Running...")
+bot.infinity_polling(skip_pending=True)
