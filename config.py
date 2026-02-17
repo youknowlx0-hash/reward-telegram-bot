@@ -4,9 +4,7 @@ ADMINS = [7702942505]  # apna telegram ID daalo
 
 CHANNELS = ["@Shein_Reward",
     "@SheinStockss",
-    "@sheinverse052",
-    "@sheinlinks202",
-    "@SheinRewardsGc"]
+    "@sheinverse052"]
 
 VOUCHER_COST = {
     "500": 4,
